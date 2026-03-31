@@ -11,7 +11,7 @@ docker run -d --name archie-node --restart unless-stopped \
   -e TOKEN=your-registration-token \
   -p 3001:3001 \
   -v archie-node-data:/data \
-  ghcr.io/kytrankatarn/archie-node:latest
+  ghcr.io/kytrankatarn/archie-fleet-node:latest
 ```
 
 **Without GPU:** Remove `--gpus all`.
