@@ -220,6 +220,17 @@ def send_heartbeat():
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
+        # Detect Tailscale/Headscale mesh IP
+        try:
+            ts = subprocess.run(
+                ["tailscale", "ip", "-4"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if ts.returncode == 0 and ts.stdout.strip():
+                payload["mesh_ip"] = ts.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
         resp = requests.post(
             f"{HUB_URL}/tools/starbase/api/nodes/{NODE_ID}/heartbeat",
             json=payload,
