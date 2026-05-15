@@ -271,13 +271,13 @@ def poll_sync_commands():
         return
     try:
         resp = requests.get(
-            f"{HUB_URL}/tools/department-hq/api/nodes/{NODE_ID}/pending-commands",
+            f"{HUB_URL}/tools/department-hq/api/mesh/sync/{NODE_ID}/pending",
             headers={"X-Node-API-Key": API_KEY},
             timeout=10,
         )
         if resp.status_code != 200:
             return
-        commands = resp.json().get("commands", [])
+        commands = resp.json().get("syncs", [])
     except Exception:
         return
 
@@ -287,11 +287,11 @@ def poll_sync_commands():
         payload = cmd.get("payload") or {}
         success = False
         result = {}
-        error = None
+        error_msg = None
 
         try:
             if sync_type == "model_pull":
-                model = payload.get("model", "")
+                model = payload.get("model_name") or payload.get("model", "")
                 if model:
                     print(f"[OTA] Pulling model: {model}")
                     r = requests.post(
@@ -302,6 +302,8 @@ def poll_sync_commands():
                     success = r.status_code == 200
                     result = {"model": model, "status": r.json().get("status", "")}
                     print(f"[OTA] Pull {model}: {'OK' if success else 'FAILED'}")
+                else:
+                    error_msg = "No model_name in payload"
 
             elif sync_type == "config_update":
                 for key, val in payload.items():
@@ -320,14 +322,16 @@ def poll_sync_commands():
                 result = {"skipped": True, "reason": f"unknown sync_type: {sync_type}"}
 
         except Exception as e:
-            error = str(e)
+            error_msg = str(e)
             print(f"[OTA] Command {sync_type} #{sync_id} failed: {e}")
 
         try:
+            ack_status = "acknowledged" if success else "error"
             requests.post(
-                f"{HUB_URL}/tools/department-hq/api/nodes/{NODE_ID}/ack-command/{sync_id}",
+                f"{HUB_URL}/tools/department-hq/api/mesh/sync/{sync_id}/ack",
                 headers={"X-Node-API-Key": API_KEY},
-                json={"success": success, "result": result, "error": error},
+                json={"node_id": NODE_ID, "status": ack_status,
+                      "result": result, "error_message": error_msg},
                 timeout=10,
             )
         except Exception as e:
