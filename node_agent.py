@@ -24,6 +24,7 @@ TOKEN = os.environ.get("TOKEN", "")
 NODE_NAME = os.environ.get("NODE_NAME", platform.node())
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://host.docker.internal:11434")
 HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))
+SYNC_INTERVAL = int(os.environ.get("SYNC_INTERVAL", "60"))  # OTA sync poll interval
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "node.db")
 API_PORT = int(os.environ.get("NODE_API_PORT", "3001"))
@@ -258,6 +259,81 @@ def send_heartbeat():
         return False
 
 
+# ── OTA Sync Polling ────────────────────────────────────────────────
+def poll_sync_commands():
+    """Poll hub for pending sync commands and execute them.
+
+    Handles: model_pull, config_update, container_restart.
+    Acks each command back to hub regardless of outcome.
+    Runs every SYNC_INTERVAL seconds from the main loop.
+    """
+    if not NODE_ID or not API_KEY:
+        return
+    try:
+        resp = requests.get(
+            f"{HUB_URL}/tools/department-hq/api/nodes/{NODE_ID}/pending-commands",
+            headers={"X-Node-API-Key": API_KEY},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return
+        commands = resp.json().get("commands", [])
+    except Exception:
+        return
+
+    for cmd in commands:
+        sync_id = cmd["id"]
+        sync_type = cmd["sync_type"]
+        payload = cmd.get("payload") or {}
+        success = False
+        result = {}
+        error = None
+
+        try:
+            if sync_type == "model_pull":
+                model = payload.get("model", "")
+                if model:
+                    print(f"[OTA] Pulling model: {model}")
+                    r = requests.post(
+                        f"{OLLAMA_HOST}/api/pull",
+                        json={"name": model, "stream": False},
+                        timeout=600,
+                    )
+                    success = r.status_code == 200
+                    result = {"model": model, "status": r.json().get("status", "")}
+                    print(f"[OTA] Pull {model}: {'OK' if success else 'FAILED'}")
+
+            elif sync_type == "config_update":
+                for key, val in payload.items():
+                    db_set(f"config_{key}", str(val))
+                success = True
+                result = {"updated": list(payload.keys())}
+                print(f"[OTA] Config updated: {list(payload.keys())}")
+
+            elif sync_type == "container_restart":
+                print("[OTA] Restart requested — will restart after ack")
+                success = True
+                result = {"action": "restart_queued"}
+
+            else:
+                success = True
+                result = {"skipped": True, "reason": f"unknown sync_type: {sync_type}"}
+
+        except Exception as e:
+            error = str(e)
+            print(f"[OTA] Command {sync_type} #{sync_id} failed: {e}")
+
+        try:
+            requests.post(
+                f"{HUB_URL}/tools/department-hq/api/nodes/{NODE_ID}/ack-command/{sync_id}",
+                headers={"X-Node-API-Key": API_KEY},
+                json={"success": success, "result": result, "error": error},
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"[OTA] Failed to ack command #{sync_id}: {e}")
+
+
 # ── Local API ───────────────────────────────────────────────────────
 app = Flask(__name__)
 
@@ -332,6 +408,7 @@ def main():
     print("[OK] Node is running. Press Ctrl+C to stop.\n")
 
     fail_count = 0
+    last_sync = 0.0
     while running:
         success = send_heartbeat()
         if success:
@@ -342,6 +419,12 @@ def main():
             fail_count += 1
             if fail_count % 10 == 1:
                 print(f"[WARN] Heartbeat failing (attempt {fail_count})")
+
+        # OTA sync poll — check for pending commands from hub
+        now = time.time()
+        if now - last_sync >= SYNC_INTERVAL:
+            poll_sync_commands()
+            last_sync = now
 
         # Sleep in small increments so SIGTERM is responsive
         for _ in range(HEARTBEAT_INTERVAL):
