@@ -232,6 +232,14 @@ def send_heartbeat():
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
+        # Self-report hostname = mesh_ip so the hub's remote_nodes.hostname
+        # column gets the canonical inter-cluster address and stops being
+        # whatever poisoned X-Forwarded-For value a proxy might inject.
+        # If mesh_ip wasn't detected (no tailscale), omit hostname entirely
+        # rather than send platform.node() (which is the Docker container ID).
+        if payload.get("mesh_ip"):
+            payload["hostname"] = payload["mesh_ip"]
+
         resp = requests.post(
             f"{HUB_URL}/tools/department-hq/api/nodes/{NODE_ID}/heartbeat",
             json=payload,
