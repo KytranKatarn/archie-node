@@ -313,23 +313,47 @@ def poll_sync_commands():
                 print(f"[OTA] Config updated: {list(payload.keys())}")
 
             elif sync_type == "checkpoint_pull":
+                import os as _os, subprocess as _sp, time as _t
+
                 url = payload.get("url", "")
                 filename = payload.get("filename", "")
                 checkpoints_dir = payload.get("checkpoints_dir", "/workspace/models/checkpoints")
+                comfyui_container = payload.get("comfyui_container", "archie_node_comfyui")
                 if url and filename:
-                    import os as _os
-                    _os.makedirs(checkpoints_dir, exist_ok=True)
-                    dest = _os.path.join(checkpoints_dir, filename)
-                    print(f"[OTA] Downloading checkpoint: {filename} → {dest}")
+                    tmp_path = f"/tmp/{filename}"
+                    print(f"[OTA] Downloading checkpoint: {filename}")
+                    t0 = _t.time()
                     with requests.get(url, stream=True, timeout=600) as dl:
                         dl.raise_for_status()
-                        with open(dest, "wb") as fh:
+                        with open(tmp_path, "wb") as fh:
                             for chunk in dl.iter_content(chunk_size=8 * 1024 * 1024):
                                 fh.write(chunk)
-                    size = _os.path.getsize(dest)
-                    success = size > 1_000_000
-                    result = {"filename": filename, "size": size, "dir": checkpoints_dir}
-                    print(f"[OTA] Checkpoint {filename}: {'OK' if success else 'TOO SMALL'} ({size:,} bytes)")
+                    size = _os.path.getsize(tmp_path)
+                    elapsed = _t.time() - t0
+                    speed = (size / 1e6) / max(elapsed, 0.1)
+                    if size < 1_000_000:
+                        error_msg = f"Download too small ({size} bytes) — endpoint may have returned an error"
+                        _os.remove(tmp_path)
+                    else:
+                        # docker cp into the ComfyUI container (Docker socket is mounted)
+                        target = f"{comfyui_container}:{checkpoints_dir}/{filename}"
+                        cp_result = _sp.run(
+                            ["docker", "cp", tmp_path, target],
+                            capture_output=True, text=True
+                        )
+                        _os.remove(tmp_path)
+                        if cp_result.returncode == 0:
+                            success = True
+                            result = {
+                                "filename": filename, "size_bytes": size,
+                                "speed_mbps": round(speed, 1),
+                                "elapsed_seconds": round(elapsed, 1),
+                                "container": comfyui_container,
+                                "status": "completed",
+                            }
+                            print(f"[OTA] Checkpoint {filename}: OK ({size:,} bytes, {speed:.1f} MB/s)")
+                        else:
+                            error_msg = f"docker cp failed: {cp_result.stderr.strip()}"
                 else:
                     error_msg = "url and filename required in payload"
 
