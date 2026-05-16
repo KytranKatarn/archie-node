@@ -321,21 +321,28 @@ def poll_sync_commands():
                 comfyui_container = payload.get("comfyui_container", "archie_node_comfyui")
                 if url and filename:
                     tmp_path = f"/tmp/{filename}"
-                    print(f"[OTA] Downloading checkpoint: {filename}")
                     t0 = _t.time()
-                    with requests.get(
-                        url, stream=True, timeout=600,
-                        headers={"X-Node-API-Key": API_KEY}
-                    ) as dl:
-                        dl.raise_for_status()
-                        with open(tmp_path, "wb") as fh:
-                            for chunk in dl.iter_content(chunk_size=8 * 1024 * 1024):
-                                fh.write(chunk)
+                    if url.startswith("file://"):
+                        # Local copy — no download needed (file is on the node already)
+                        import shutil as _sh
+                        src = url[7:]
+                        print(f"[OTA] Copying checkpoint: {src} → {tmp_path}")
+                        _sh.copy2(src, tmp_path)
+                    else:
+                        print(f"[OTA] Downloading checkpoint: {filename}")
+                        with requests.get(
+                            url, stream=True, timeout=600,
+                            headers={"X-Node-API-Key": API_KEY}
+                        ) as dl:
+                            dl.raise_for_status()
+                            with open(tmp_path, "wb") as fh:
+                                for chunk in dl.iter_content(chunk_size=8 * 1024 * 1024):
+                                    fh.write(chunk)
                     size = _os.path.getsize(tmp_path)
                     elapsed = _t.time() - t0
                     speed = (size / 1e6) / max(elapsed, 0.1)
                     if size < 1_000_000:
-                        error_msg = f"Download too small ({size} bytes) — endpoint may have returned an error"
+                        error_msg = f"File too small ({size} bytes) — source may be corrupt"
                         _os.remove(tmp_path)
                     else:
                         # docker cp into the ComfyUI container (Docker socket is mounted)
@@ -361,9 +368,21 @@ def poll_sync_commands():
                     error_msg = "url and filename required in payload"
 
             elif sync_type == "container_restart":
-                print("[OTA] Restart requested — will restart after ack")
+                import threading as _th, subprocess as _sp
+
+                containers = payload.get("containers", [])
+                print(f"[OTA] Restart requested for: {containers or 'self'}")
+
+                def _do_restart(ctrs, delay=2):
+                    import time
+                    time.sleep(delay)
+                    for ctr in ctrs:
+                        r = _sp.run(["docker", "restart", ctr], capture_output=True, text=True)
+                        print(f"[OTA] docker restart {ctr}: {'OK' if r.returncode == 0 else r.stderr}")
+
+                _th.Thread(target=_do_restart, args=(containers,), daemon=True).start()
                 success = True
-                result = {"action": "restart_queued"}
+                result = {"action": "restart_scheduled", "containers": containers, "delay_seconds": 2}
 
             else:
                 success = True
