@@ -323,7 +323,10 @@ def poll_sync_commands():
                     tmp_path = f"/tmp/{filename}"
                     print(f"[OTA] Downloading checkpoint: {filename}")
                     t0 = _t.time()
-                    with requests.get(url, stream=True, timeout=600) as dl:
+                    with requests.get(
+                        url, stream=True, timeout=600,
+                        headers={"X-Node-API-Key": API_KEY}
+                    ) as dl:
                         dl.raise_for_status()
                         with open(tmp_path, "wb") as fh:
                             for chunk in dl.iter_content(chunk_size=8 * 1024 * 1024):
