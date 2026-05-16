@@ -312,6 +312,27 @@ def poll_sync_commands():
                 result = {"updated": list(payload.keys())}
                 print(f"[OTA] Config updated: {list(payload.keys())}")
 
+            elif sync_type == "checkpoint_pull":
+                url = payload.get("url", "")
+                filename = payload.get("filename", "")
+                checkpoints_dir = payload.get("checkpoints_dir", "/workspace/models/checkpoints")
+                if url and filename:
+                    import os as _os
+                    _os.makedirs(checkpoints_dir, exist_ok=True)
+                    dest = _os.path.join(checkpoints_dir, filename)
+                    print(f"[OTA] Downloading checkpoint: {filename} → {dest}")
+                    with requests.get(url, stream=True, timeout=600) as dl:
+                        dl.raise_for_status()
+                        with open(dest, "wb") as fh:
+                            for chunk in dl.iter_content(chunk_size=8 * 1024 * 1024):
+                                fh.write(chunk)
+                    size = _os.path.getsize(dest)
+                    success = size > 1_000_000
+                    result = {"filename": filename, "size": size, "dir": checkpoints_dir}
+                    print(f"[OTA] Checkpoint {filename}: {'OK' if success else 'TOO SMALL'} ({size:,} bytes)")
+                else:
+                    error_msg = "url and filename required in payload"
+
             elif sync_type == "container_restart":
                 print("[OTA] Restart requested — will restart after ack")
                 success = True
