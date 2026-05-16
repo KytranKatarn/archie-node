@@ -138,7 +138,7 @@ def register_with_hub(hw):
     }
 
     resp = requests.post(
-        f"{HUB_URL}/tools/starbase/api/fleet/register",
+        f"{HUB_URL}/tools/department-hq/api/fleet/register",
         json=payload,
         timeout=15,
     )
@@ -165,7 +165,7 @@ def register_with_hub(hw):
             time.sleep(10)
             try:
                 poll = requests.get(
-                    f"{HUB_URL}/tools/starbase/api/fleet/status/{NODE_ID}",
+                    f"{HUB_URL}/tools/department-hq/api/fleet/status/{NODE_ID}",
                     params={"need_key": "true"},
                     timeout=10,
                 ).json()
@@ -233,7 +233,7 @@ def send_heartbeat():
             pass
 
         resp = requests.post(
-            f"{HUB_URL}/tools/starbase/api/nodes/{NODE_ID}/heartbeat",
+            f"{HUB_URL}/tools/department-hq/api/nodes/{NODE_ID}/heartbeat",
             json=payload,
             headers={"X-Node-API-Key": API_KEY},
             timeout=10,
